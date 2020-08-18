@@ -13,33 +13,31 @@
 # limitations under the License.
 # ==============================================================================
 """BERT classification or regression finetuning runner in TF 2.x."""
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+from __future__ import absolute_import, division, print_function
 
 import functools
 import json
 import math
 import os
 
-from absl import app
-from absl import flags
-from absl import logging
-import gin
 import tensorflow as tf
+from absl import app, flags, logging
+
+import gin
+from data import input_pipeline
+from data.dataset import (ContrastiveDataset, SentencesDataset, SiameseDataset,
+                          TripletDataset)
+from model import siamese_bert
 from official.modeling import performance
 from official.nlp import optimization
-from official.nlp.bert import bert_models
-from official.nlp.bert import common_flags
-from official.nlp.bert import tokenization
+from official.nlp.bert import bert_models, common_flags
 from official.nlp.bert import configs as bert_configs
-from official.nlp.bert import model_saving_utils
-from official.utils.misc import distribution_utils
-from official.utils.misc import keras_utils
-
-from data.dataset import SiameseDataset, SentencesDataset
-from data import input_pipeline
-from model import siamese_bert
+from official.nlp.bert import model_saving_utils, tokenization
+from official.utils.misc import distribution_utils, keras_utils
+from utils.losses import (get_classification_loss_fn, get_contrastive_loss_fn,
+                          get_triplet_loss_fn)
+from utils.metrics import (get_contrastive_distance_fn,
+                           get_contrastive_metric_fn, get_triplet_metric_fn)
 
 flags.DEFINE_enum(
     'mode', 'train_and_eval', ['train_and_eval', 'export_only', 'predict'],
@@ -65,6 +63,7 @@ flags.DEFINE_integer('eval_batch_size', 32, 'Batch size for evaluation.')
 
 # 额外的flags
 flags.DEFINE_enum('model_type', 'bert', ['bert','siamese'],'model type')
+flags.DEFINE_enum('siamese_type', 'classify', ['classify','triplet','contrastive'],'siamese type')
 flags.DEFINE_integer('max_seq_length', 512, 'Max sequence length, default 512, you can use smaller number to save memory')
 flags.DEFINE_string('vocab_file', None,
                     'The vocabulary file that the BERT model was trained on.')
@@ -73,26 +72,15 @@ flags.DEFINE_string('label_file', None,
 flags.DEFINE_integer('train_data_size', None, 'size of training dataset.')
 flags.DEFINE_integer('eval_data_size', None, 'size of evaluation dataset.')
 
+# Triplet loss flags
+flags.DEFINE_float('margin', 1.0, 'margin for triplet loss')
+
+
 common_flags.define_common_bert_flags()
 
 FLAGS = flags.FLAGS
 
 
-
-def get_loss_fn(num_classes):
-  """Gets the classification loss function."""
-
-  def classification_loss_fn(labels, logits):
-    """Classification loss."""
-    labels = tf.squeeze(labels)
-    log_probs = tf.nn.log_softmax(logits, axis=-1)
-    one_hot_labels = tf.one_hot(
-        tf.cast(labels, dtype=tf.int32), depth=num_classes, dtype=tf.float32)
-    per_example_loss = -tf.reduce_sum(
-        tf.cast(one_hot_labels, dtype=tf.float32) * log_probs, axis=-1)
-    return tf.reduce_mean(per_example_loss)
-
-  return classification_loss_fn
 
 def get_dataset_fn(raw_dataset,
                    global_batch_size,
@@ -132,7 +120,7 @@ def run_bert_classifier(strategy,
   max_seq_length = input_meta_data['max_seq_length']
   num_classes = input_meta_data.get('num_labels', 1)
   logging.info(f'class num {num_classes}')
-  is_regression = num_classes == 1
+  is_regression = num_classes <= 1
 
   def _get_model():
     """Gets a siamese model."""
@@ -140,7 +128,8 @@ def run_bert_classifier(strategy,
       model, core_model = (
         siamese_bert.siamese_model(
             bert_config,
-            num_classes))
+            num_classes,
+            siamese_type=FLAGS.siamese_type))
     else:
       model, core_model = (
         bert_models.classifier_model(
@@ -161,8 +150,17 @@ def run_bert_classifier(strategy,
   # from the dataset) to compute weighted loss, as used for the regression
   # tasks. The classification tasks, using the custom get_loss_fn don't accept
   # sample weights though.
-  loss_fn = (tf.keras.losses.MeanSquaredError() if is_regression
-             else get_loss_fn(num_classes))
+  loss_fn = None
+  if is_regression:
+    loss_fn = tf.keras.losses.MeanSquaredError() 
+  else:
+    if FLAGS.model_type == 'siamese':
+      if FLAGS.siamese_type == 'triplet':
+        loss_fn = get_triplet_loss_fn(FLAGS.margin)
+      elif FLAGS.siamese_type == 'contrastive':
+        loss_fn = get_contrastive_loss_fn(FLAGS.margin)
+    if loss_fn is None:
+      loss_fn = get_classification_loss_fn(num_classes)
 
   # Defines evaluation metrics function, which will create metrics in the
   # correct device and strategy scope.
@@ -174,7 +172,17 @@ def run_bert_classifier(strategy,
         'mean_squared_error',
         dtype=tf.float32)
   else:
-    metric_fn = functools.partial(
+    # TODO：暂时没想好triplet算什么metric比较好
+    if FLAGS.model_type == 'siamese':
+      if FLAGS.siamese_type == 'triplet':
+        metric_fn = functools.partial(get_triplet_metric_fn,FLAGS.margin)
+      elif FLAGS.siamese_type == 'contrastive':
+        metric_fn = [
+          functools.partial(get_contrastive_metric_fn,FLAGS.margin/2),
+          functools.partial(get_contrastive_distance_fn,1),
+          functools.partial(get_contrastive_distance_fn,0)]
+    else:
+      metric_fn = functools.partial(
         tf.keras.metrics.SparseCategoricalAccuracy,
         'accuracy',
         dtype=tf.float32)
@@ -227,12 +235,12 @@ def run_keras_compile_fit(model_dir,
       checkpoint = tf.train.Checkpoint(model=sub_model)
       checkpoint.restore(init_checkpoint).assert_existing_objects_matched()
 
-    if not isinstance(metric_fn, (list, tuple)):
+    if metric_fn and not isinstance(metric_fn, (list, tuple)):
       metric_fn = [metric_fn]
     bert_model.compile(
         optimizer=optimizer,
         loss=loss_fn,
-        metrics=[fn() for fn in metric_fn])
+        metrics=[fn() for fn in metric_fn] if metric_fn else None)
         # steps_per_loop这个是个坑，我在训练的时候没有设置，一直报init_value的错误，我还一直以为是模型的错误
         # -_-!!!
         # experimental_steps_per_execution=steps_per_loop
@@ -253,8 +261,8 @@ def run_keras_compile_fit(model_dir,
     model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
       filepath=best_dir,
       save_weights_only=True,
-      monitor='val_accuracy',
-      mode='max',
+      monitor='val_accuracy' if metric_fn else 'val_loss',
+      mode='max' if metric_fn else 'min',
       save_best_only=True)
 
     if training_callbacks:
@@ -357,7 +365,12 @@ def custom_main(custom_callbacks=None, custom_metrics=None):
       num_gpus=FLAGS.num_gpus)
 
   if FLAGS.model_type == 'siamese':
-    data_fn = SiameseDataset
+    if FLAGS.siamese_type == 'classifier':
+      data_fn = SiameseDataset
+    elif FLAGS.siamese_type == 'triplet':
+      data_fn = TripletDataset
+    elif FLAGS.siamese_type == 'contrastive':
+      data_fn = ContrastiveDataset
   else:
     data_fn = SentencesDataset
   

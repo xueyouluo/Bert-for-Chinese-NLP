@@ -19,7 +19,8 @@ from utils import model_utils
 
 class LSTMSiamese(tf.keras.Model):
   def __init__(self, vocab_size, dim, dropout_rate=0.1, **kwargs):
-    '''LSTM的baseline模型，用于验证整个pipeline能够跑通，方便调试'''
+    '''基于LSTM的baseline模型，用于验证整个pipeline能够跑通，方便调试'''
+    logging.info('Using LSTM model...')
     self._self_setattr_tracking = False
     self.model = tf.keras.Sequential([
       tf.keras.layers.Embedding(vocab_size, dim, mask_zero=True),
@@ -79,13 +80,13 @@ class BertSiamese(tf.keras.Model):
   def from_config(cls, config, custom_objects=None):
     return cls(**config)
 
-class SiameseModel(tf.keras.Model):
-  def __init__(self, siamese_model, num_labels, dropout_rate=0.1, **kwargs):
-    super(SiameseModel,self).__init__(**kwargs)
-    self.encoder = siamese_model
+class SiameseClassifierModel(tf.keras.Model):
+  def __init__(self, encoder, num_labels, dropout_rate=0.1, **kwargs):
+    super(SiameseClassifierModel,self).__init__(**kwargs)
+    self.encoder = encoder
 
     self._config = {
-      'siamese_model':siamese_model,
+      'encoder':encoder,
       "dropout_rate":dropout_rate,
       "num_labels":num_labels,
     }
@@ -99,29 +100,77 @@ class SiameseModel(tf.keras.Model):
     outputs = self.dense(outputs)
     return outputs
 
-  @property
-  def checkpoint_items(self):
-    return dict(encoder=self._network)
+class SiameseContrastiveModel(tf.keras.Model):
+  def __init__(self, encoder, **kwargs):
+    super().__init__(**kwargs)
+    self.encoder = encoder
 
-  def get_config(self):
-    return self._config
+  def call(self, inputs, training=False):
+    assert len(inputs) == 2, 'inputs must have 2 values'
+    a,b = inputs
+    a = self.encoder(a,training=training)
+    b = self.encoder(b,training=training)
+    val = tf.linalg.norm(a-b,axis=1)
+    return val
 
-  @classmethod
-  def from_config(cls, config, custom_objects=None):
-    return cls(**config)
+
+class SiameseTripletModel(tf.keras.Model):
+  def __init__(self, encoder, **kwargs):
+    super().__init__(**kwargs)
+    self.encoder = encoder
+
+  def call(self, inputs, training=False):
+    if len(inputs) == 3:
+      anchor,pos,neg = inputs
+      anchor = self.encoder(anchor,training=training)
+      pos = self.encoder(pos,training=training)
+      neg = self.encoder(neg,training=training)
+    elif len(inputs) == 2:
+      anchor, pos = inputs
+      anchor = self.encoder(anchor,training=training)
+      pos = self.encoder(pos,training=training)
+
+      batch_size = tf.shape(pos)[0]
+      expand_pos = tf.expand_dims(pos,axis=0)
+      # B * B * D
+      expand_pos = tf.tile(expand_pos,[batch_size,1,1])
+      # B * 1 * D
+      expand_anchor = tf.expand_dims(anchor,axis=1)
+      # B * B
+      dist = tf.reduce_sum(tf.square(expand_anchor-expand_pos),axis=-1)
+      # B * B
+      mask = tf.eye(batch_size) * 1e20
+      mask_dist = mask + dist
+      indices = tf.argmin(mask_dist,axis=-1)
+      # TODO：不确定是否需要stop gradient
+      incices = tf.stop_gradient(indices)
+      neg = tf.gather(pos,indices)
+    else:
+      raise ValueError('inputs length must be 2 or 3')
+    concat_val = tf.concat([anchor,pos,neg],axis=-1)
+    return concat_val
 
 def siamese_model(bert_config,
                   num_labels,
-                  pooling_type='MEAN',
-                  mode='train'):
+                  siamese_type='classify',
+                  pooling_type='MEAN'):
   encoder = bert_models.get_transformer_encoder(bert_config)
   bert_siamese = BertSiamese(
     encoder=encoder,
     pooling_type=pooling_type,
     dropout_rate=bert_config.hidden_dropout_prob)
+
+  # Uncomment following line to get a baseline model to debug your network
   # bert_siamese = encoder = LSTMSiamese(bert_config.vocab_size, bert_config.hidden_size)
-  bert_siamese = SiameseModel(
-    bert_siamese, 
-    num_labels=num_labels, 
-    dropout_rate=bert_config.hidden_dropout_prob)
+  if siamese_type == 'classify':
+    bert_siamese = SiameseClassifierModel(
+      bert_siamese, 
+      num_labels=num_labels, 
+      dropout_rate=bert_config.hidden_dropout_prob)
+  elif siamese_type == 'triplet':
+    bert_siamese = SiameseTripletModel(bert_siamese)
+  elif siamese_type == 'contrastive':
+    bert_siamese = SiameseContrastiveModel(bert_siamese)
+  else:
+    raise ValueError(f'Siamese type {siamese_type} not supported!!')
   return bert_siamese, encoder

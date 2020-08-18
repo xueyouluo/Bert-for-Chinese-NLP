@@ -91,6 +91,9 @@ class BaseDataset(object):
   def process_single_example(self, item):
     raise NotImplementedError
 
+  def filter_example(self, item):
+    return False
+
   def make_generator(self, prefetch=True):
     if self.prefetched:
       for item in self.data:
@@ -98,6 +101,8 @@ class BaseDataset(object):
     else:
       for line in open(self.file_path):
         item = json.loads(line)
+        if self.filter_example(item):
+          continue
         try:
           item = self.process_single_example(item)
         except Exception as e:
@@ -154,6 +159,57 @@ class SentencesDataset(BaseDataset):
   def output_type(self):
     return {
       'text_a':(tf.int32,tf.int32),
+      'label': tf.int32 if self.label_map else tf.float32
+    }
+
+class ContrastiveDataset(BaseDataset):
+  def process_single_example(self, item):
+    text_a, segment_a = self.encode_single_sentence(item['text_a'])
+    text_b, segment_b = self.encode_single_sentence(item['text_b'])
+    label = self.label_map[item['label']] if self.label_map else item['label']
+    return {'text_a':(text_a,segment_a),'text_b':(text_b,segment_b),'label':label}
+
+  @property
+  def output_shape(self):
+    return {
+      "text_a": (tf.TensorShape([None]),tf.TensorShape([None])),
+      "text_b":  (tf.TensorShape([None]),tf.TensorShape([None])),
+      "label": tf.TensorShape([])
+    }
+
+  @property
+  def output_type(self):
+    return {
+      'text_a': (tf.int32,tf.int32),
+      'text_b': (tf.int32,tf.int32),
+      'label': tf.int32 if self.label_map else tf.float32
+    }
+
+class TripletDataset(BaseDataset):
+  def filter_example(self, item):
+    if item['label'] == '0':
+      return True
+    return False
+    
+  def process_single_example(self, item):
+    text_a, segment_a = self.encode_single_sentence(item['text_a'])
+    text_b, segment_b = self.encode_single_sentence(item['text_b'])
+    # label暂时没有用到，随便设置了一个值
+    return {'text_a':(text_a,segment_a),'text_b':(text_b,segment_b),'label':0}
+
+  @property
+  def output_shape(self):
+    return {
+      "text_a": (tf.TensorShape([None]),tf.TensorShape([None])),
+      "text_b":  (tf.TensorShape([None]),tf.TensorShape([None])),
+      "label": tf.TensorShape([])
+    }
+
+  @property
+  def output_type(self):
+    return {
+      'text_a': (tf.int32,tf.int32),
+      'text_b': (tf.int32,tf.int32),
       'label': tf.int32 if self.label_map else tf.float32
     }
 

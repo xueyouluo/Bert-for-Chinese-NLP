@@ -81,6 +81,9 @@ Bert for Chinese NLP tasks, developed with TensorFlow 2.x.
 
 > evaluation的时候使用了同样的方法来计算metric，即在同一个batch中，anchor对应的postive之间的距离应该是最小的。
 
+在lcqmc的简单测试结果：
+
+> `loss: 0.1070 - accuracy: 99.0986 - val_loss: 0.0464 - val_accuracy: 99.2188`
 
 ##### Contrastive Loss
 
@@ -93,3 +96,25 @@ Bert for Chinese NLP tasks, developed with TensorFlow 2.x.
 可以发现测试集上负例之间的平均距离也是小于0.5的，所以这个margin还是挺难调节的。暂时没有时间去继续深入研究。
 
 > 使用bert发现正例之间以及负例之间的距离非常接近，需要进一步debug一下。
+
+##### Additive Margin Softmax
+
+最近读到了Google的论文《Language-agnostic BERT Sentence Embedding》，其中提到的additive margin softmax挺有趣的，因此也实现了一下，将simese_type设置为ams即可。
+
+一开始使用LSTM的模型进行了测试，发现效果不行，因此直接改成用bert进行测试，效果开始好了很多。
+
+测试时发现evaluation的loss和accuracy基本没什么变化，而且accuracy效果较差，因此将evaluation的batch size调整到跟训练的大小一样，发现效果好了很多。也正如论文中提到的，这种任务需要batch size越大越好，有机会会研究一下论文中提到的Cross-Accelerator Negative Sampling机制，可以将negative变得很大。
+
+> 但是evalutation的loss还是没有什么变化，把测试数据换成训练数据发现还是能降的，说明模型应该是过拟合到训练数据了，所以还是需要将batch size弄大一些。
+
+> 对论文中提到的将normalize之后的embedding再进行scale这一步不是特别清楚，因为即使你scale后算cosine距离其实还是一样的，我们分析是他想扩大gradients，但是这个直接对loss或者learning rate进行scale不行吗？
+
+简单跑了一下lcqmc的任务，结果大概如下：
+
+> `loss: 5.9412 - forward_accuracy: 88.5817 - backward_accuracy: 88.7921 - val_loss: 5.7582 - val_forward_accuracy: 94.5312 - val_backward_accuracy: 92.1875`
+
+google也放出了他们在100多个语言上训练的LaBSE模型，有时间的话把它拿过来在中文上测试一下。
+
+##### 实际检验
+
+从上面的简单的结果来看，triplet loss的效果最好，AMS的效果其次，但是我们需要在进一步实践中检验一下他们的效果，看看哪种方法能够从数据集中找到最相似的句子。

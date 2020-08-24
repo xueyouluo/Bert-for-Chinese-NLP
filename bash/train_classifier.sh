@@ -13,7 +13,7 @@ python run_classifier.py \
   --train_data_path=${DATA_DIR}/train.json \
   --eval_data_path=${DATA_DIR}/dev.json \
   --train_batch_size=32 \
-  --eval_batch_size=128 \
+  --eval_batch_size=32 \
   --max_seq_length=256 \
   --learning_rate=2e-5 \
   --vocab_file=${BERT_DIR}/vocab.txt \
@@ -23,10 +23,10 @@ python run_classifier.py \
   --num_eval_per_epoch=3 \
   --model_dir=${DATA_DIR}/contrastive \
   --distribution_strategy=mirrored \
-  --train_data_size=100000 \
-  --eval_data_size=400 \
+  --train_data_size=10000 \
+  --eval_data_size=100 \
   --init_checkpoint=${BERT_DIR}/bert_model-1 \
-  #--num_gpus=1 \
+  --num_gpus=1 \
   #--dtype=fp16 \
   #--loss_scale=dynamic \
 

@@ -18,7 +18,7 @@ from official.nlp.modeling import networks
 from utils import model_utils
 
 class LSTMSiamese(tf.keras.Model):
-  def __init__(self, vocab_size, dim, dropout_rate=0.1, **kwargs):
+  def __init__(self, vocab_size, dim, dropout_rate=0.1, norm=False, **kwargs):
     '''基于LSTM的baseline模型，用于验证整个pipeline能够跑通，方便调试'''
     logging.info('Using LSTM model...')
     self._self_setattr_tracking = False
@@ -38,11 +38,13 @@ class LSTMSiamese(tf.keras.Model):
         shape=(None,), dtype=tf.int32, name='input_type_ids')
     
     output = self.model(word_ids)
+    if norm:
+      output = tf.nn.l2_normalize(output)
     super(LSTMSiamese, self).__init__(inputs=[word_ids,mask,type_ids],outputs=output,**kwargs)
 
 @tf.keras.utils.register_keras_serializable(package='Text')
 class BertSiamese(tf.keras.Model):
-  def __init__(self, encoder, pooling_type='MEAN', dropout_rate=0.1, **kwargs):
+  def __init__(self, encoder, pooling_type='MEAN', dropout_rate=0.1, norm=False, **kwargs):
     self._self_setattr_tracking = False
     self._encoder = encoder
     self._config = {
@@ -65,8 +67,11 @@ class BertSiamese(tf.keras.Model):
       )
     elif pooling_type.lower() == 'cls':
       pooled_output = cls_output
+    if norm:
+      pooled_output = tf.nn.l2_normalize(pooled_output)
     output = tf.keras.layers.Dropout(rate=dropout_rate)(
         pooled_output)
+    
     super(BertSiamese, self).__init__(inputs=inputs,outputs=output,**kwargs)
 
   @property
@@ -79,6 +84,20 @@ class BertSiamese(tf.keras.Model):
   @classmethod
   def from_config(cls, config, custom_objects=None):
     return cls(**config)
+
+class SiameseAMSModel(tf.keras.Model):
+  '''AMS is short for Additive Margin Softmax'''
+  def __init__(self, encoder, **kwargs):
+    super().__init__(**kwargs)
+    self.encoder = encoder
+
+  def call(self, inputs):
+    assert len(inputs) == 2, 'inputs must have 2 values'
+    a,b = inputs
+    a = self.encoder(a)
+    b = self.encoder(b)
+    concat_val = tf.concat([a,b],axis=-1)
+    return concat_val
 
 class SiameseClassifierModel(tf.keras.Model):
   def __init__(self, encoder, num_labels, dropout_rate=0.1, **kwargs):
@@ -112,7 +131,6 @@ class SiameseContrastiveModel(tf.keras.Model):
     b = self.encoder(b,training=training)
     val = tf.linalg.norm(a-b,axis=1)
     return val
-
 
 class SiameseTripletModel(tf.keras.Model):
   def __init__(self, encoder, **kwargs):
@@ -153,15 +171,18 @@ class SiameseTripletModel(tf.keras.Model):
 def siamese_model(bert_config,
                   num_labels,
                   siamese_type='classify',
-                  pooling_type='MEAN'):
+                  pooling_type='CLS'):
   encoder = bert_models.get_transformer_encoder(bert_config)
   bert_siamese = BertSiamese(
     encoder=encoder,
     pooling_type=pooling_type,
-    dropout_rate=bert_config.hidden_dropout_prob)
+    dropout_rate=bert_config.hidden_dropout_prob,
+    norm=True if siamese_type=='ams' else False
+  )
 
   # Uncomment following line to get a baseline model to debug your network
-  # bert_siamese = encoder = LSTMSiamese(bert_config.vocab_size, bert_config.hidden_size)
+  # bert_siamese = encoder = LSTMSiamese(
+  #   bert_config.vocab_size, bert_config.hidden_size,norm=True if siamese_type=='ams' else False)
   if siamese_type == 'classify':
     bert_siamese = SiameseClassifierModel(
       bert_siamese, 
@@ -171,6 +192,8 @@ def siamese_model(bert_config,
     bert_siamese = SiameseTripletModel(bert_siamese)
   elif siamese_type == 'contrastive':
     bert_siamese = SiameseContrastiveModel(bert_siamese)
+  elif siamese_type == 'ams':
+    bert_siamese = SiameseAMSModel(bert_siamese)
   else:
     raise ValueError(f'Siamese type {siamese_type} not supported!!')
   return bert_siamese, encoder

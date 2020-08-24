@@ -35,8 +35,8 @@ from official.nlp.bert import configs as bert_configs
 from official.nlp.bert import model_saving_utils, tokenization
 from official.utils.misc import distribution_utils, keras_utils
 from utils.losses import (get_classification_loss_fn, get_contrastive_loss_fn,
-                          get_triplet_loss_fn)
-from utils.metrics import (get_contrastive_distance_fn,
+                          get_triplet_loss_fn, get_additive_margin_softmax_loss)
+from utils.metrics import (get_contrastive_distance_fn, get_ams_metric_fn,
                            get_contrastive_metric_fn, get_triplet_metric_fn)
 
 flags.DEFINE_enum(
@@ -63,7 +63,7 @@ flags.DEFINE_integer('eval_batch_size', 32, 'Batch size for evaluation.')
 
 # 额外的flags
 flags.DEFINE_enum('model_type', 'bert', ['bert','siamese'],'model type')
-flags.DEFINE_enum('siamese_type', 'classify', ['classify','triplet','contrastive'],'siamese type')
+flags.DEFINE_enum('siamese_type', 'classify', ['classify','triplet','contrastive','ams'],'siamese type')
 flags.DEFINE_integer('max_seq_length', 512, 'Max sequence length, default 512, you can use smaller number to save memory')
 flags.DEFINE_string('vocab_file', None,
                     'The vocabulary file that the BERT model was trained on.')
@@ -159,6 +159,8 @@ def run_bert_classifier(strategy,
         loss_fn = get_triplet_loss_fn(FLAGS.margin)
       elif FLAGS.siamese_type == 'contrastive':
         loss_fn = get_contrastive_loss_fn(FLAGS.margin)
+      elif FLAGS.siamese_type == 'ams':
+        loss_fn = get_additive_margin_softmax_loss(FLAGS.margin)
     if loss_fn is None:
       loss_fn = get_classification_loss_fn(num_classes)
 
@@ -175,12 +177,21 @@ def run_bert_classifier(strategy,
     # TODO：暂时没想好triplet算什么metric比较好
     if FLAGS.model_type == 'siamese':
       if FLAGS.siamese_type == 'triplet':
-        metric_fn = functools.partial(get_triplet_metric_fn,FLAGS.margin)
+        metric_fn = get_triplet_metric_fn
+      elif FLAGS.siamese_type == 'classify':
+        metric_fn = functools.partial(
+        tf.keras.metrics.SparseCategoricalAccuracy,
+        'accuracy',
+        dtype=tf.float32)
       elif FLAGS.siamese_type == 'contrastive':
         metric_fn = [
           functools.partial(get_contrastive_metric_fn,FLAGS.margin/2),
           functools.partial(get_contrastive_distance_fn,1),
           functools.partial(get_contrastive_distance_fn,0)]
+      elif FLAGS.siamese_type == 'ams':
+        metric_fn = [
+          functools.partial(get_ams_metric_fn,True),
+          functools.partial(get_ams_metric_fn,False)]
     else:
       metric_fn = functools.partial(
         tf.keras.metrics.SparseCategoricalAccuracy,
@@ -365,9 +376,9 @@ def custom_main(custom_callbacks=None, custom_metrics=None):
       num_gpus=FLAGS.num_gpus)
 
   if FLAGS.model_type == 'siamese':
-    if FLAGS.siamese_type == 'classifier':
+    if FLAGS.siamese_type == 'classify':
       data_fn = SiameseDataset
-    elif FLAGS.siamese_type == 'triplet':
+    elif FLAGS.siamese_type in ['triplet','ams']:
       data_fn = TripletDataset
     elif FLAGS.siamese_type == 'contrastive':
       data_fn = ContrastiveDataset

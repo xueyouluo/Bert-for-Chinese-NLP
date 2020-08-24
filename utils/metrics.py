@@ -66,3 +66,30 @@ def get_triplet_metric_fn():
   # 这是为了让fit的metric名称比较直观，不然会使用函数本身的名称
   triplet_metric_fn.__name__ = 'accuracy'
   return triplet_metric_fn
+
+def get_ams_metric_fn(forward=True):
+  def ams_metric_fn(y_true,y_pred):
+    dim = tf.shape(y_pred)[-1] // 2
+    a,b = y_pred[:,:dim], y_pred[:,dim:]
+    batch_size = tf.shape(a)[0]
+    def accuracy(a,b):
+      # B * 1 * D
+      expand_a = tf.expand_dims(a,axis=1)
+      expand_b = tf.expand_dims(b,axis=0)
+      # B * B * D
+      expand_b = tf.tile(expand_b,[batch_size,1,1])
+      # B * B
+      cos_dist = 1 - tf.reduce_sum(expand_a*expand_b,axis=-1)
+      truth = tf.range(batch_size,dtype=tf.int64)
+      closest = tf.argmin(cos_dist, axis=-1)
+      return tf.reduce_sum(tf.cast(tf.equal(truth,closest),tf.int32)) / batch_size * 100
+    
+    if forward:
+      return accuracy(a,b)
+    else:
+      return accuracy(b,a)
+
+  ams_metric_fn.__name__ = ('forward_' if forward else 'backward_') + 'accuracy'
+  return ams_metric_fn
+
+

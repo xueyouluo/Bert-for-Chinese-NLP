@@ -39,7 +39,7 @@ class LSTMSiamese(tf.keras.Model):
     
     output = self.model(word_ids)
     if norm:
-      output = tf.nn.l2_normalize(output)
+      output = tf.nn.l2_normalize(output,axis=1)
     super(LSTMSiamese, self).__init__(inputs=[word_ids,mask,type_ids],outputs=output,**kwargs)
 
 @tf.keras.utils.register_keras_serializable(package='Text')
@@ -68,7 +68,7 @@ class BertSiamese(tf.keras.Model):
     elif pooling_type.lower() == 'cls':
       pooled_output = cls_output
     if norm:
-      pooled_output = tf.nn.l2_normalize(pooled_output)
+      pooled_output = tf.nn.l2_normalize(pooled_output,axis=1)
     output = tf.keras.layers.Dropout(rate=dropout_rate)(
         pooled_output)
     
@@ -91,11 +91,11 @@ class SiameseAMSModel(tf.keras.Model):
     super().__init__(**kwargs)
     self.encoder = encoder
 
-  def call(self, inputs):
+  def call(self, inputs, training=False):
     assert len(inputs) == 2, 'inputs must have 2 values'
     a,b = inputs
-    a = self.encoder(a)
-    b = self.encoder(b)
+    a = self.encoder(a,training=training)
+    b = self.encoder(b,training=training)
     concat_val = tf.concat([a,b],axis=-1)
     return concat_val
 

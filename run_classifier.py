@@ -166,6 +166,7 @@ def run_bert_classifier(strategy,
 
   # Defines evaluation metrics function, which will create metrics in the
   # correct device and strategy scope.
+  monitor = None
   if custom_metrics:
     metric_fn = custom_metrics
   elif is_regression:
@@ -173,6 +174,7 @@ def run_bert_classifier(strategy,
         tf.keras.metrics.MeanSquaredError,
         'mean_squared_error',
         dtype=tf.float32)
+    monitor = 'val_mean_squared_error'
   else:
     # TODO：暂时没想好triplet算什么metric比较好
     if FLAGS.model_type == 'siamese':
@@ -192,11 +194,15 @@ def run_bert_classifier(strategy,
         metric_fn = [
           functools.partial(get_ams_metric_fn,True),
           functools.partial(get_ams_metric_fn,False)]
+        monitor = 'val_forward_accuracy'
     else:
       metric_fn = functools.partial(
         tf.keras.metrics.SparseCategoricalAccuracy,
         'accuracy',
         dtype=tf.float32)
+    
+    if not monitor:
+      monitor = 'val_accuracy'
 
   # Start training using Keras compile/fit API.
   logging.info('Training using TF 2.x Keras compile/fit API with '
@@ -214,6 +220,7 @@ def run_bert_classifier(strategy,
       steps_per_epoch,
       steps_per_loop,
       eval_steps,
+      monitor=monitor,
       training_callbacks=training_callbacks,
       custom_callbacks=custom_callbacks)
 
@@ -229,6 +236,7 @@ def run_keras_compile_fit(model_dir,
                           steps_per_epoch,
                           steps_per_loop,
                           eval_steps,
+                          monitor='val_loss',
                           training_callbacks=True,
                           custom_callbacks=None):
   """Runs BERT classifier model using Keras compile/fit API."""
@@ -272,8 +280,8 @@ def run_keras_compile_fit(model_dir,
     model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
       filepath=best_dir,
       save_weights_only=True,
-      monitor='val_accuracy' if metric_fn else 'val_loss',
-      mode='max' if metric_fn else 'min',
+      monitor=monitor,
+      mode='min' if ('loss' in monitor or 'error' in monitor) else 'max',
       save_best_only=True)
 
     if training_callbacks:

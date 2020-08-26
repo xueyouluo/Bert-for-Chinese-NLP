@@ -7,27 +7,27 @@ export DATA_DIR=/data/xueyou/data/corpus/task_data/lcqmc
 
 python run_classifier.py \
   --model_type=siamese \
-  --siamese_type=contrastive \
+  --siamese_type=ams \
   --mode='train_and_eval' \
-  --margin=1.0 \
+  --margin=0.3 \
   --train_data_path=${DATA_DIR}/train.json \
   --eval_data_path=${DATA_DIR}/dev.json \
-  --train_batch_size=32 \
-  --eval_batch_size=32 \
-  --max_seq_length=256 \
+  --train_batch_size=128 \
+  --eval_batch_size=128 \
+  --max_seq_length=128 \
   --learning_rate=2e-5 \
   --vocab_file=${BERT_DIR}/vocab.txt \
   --label_file=labels/binary.txt \
   --bert_config_file=${BERT_DIR}/bert_config.json \
-  --num_train_epochs=3 \
-  --num_eval_per_epoch=3 \
-  --model_dir=${DATA_DIR}/contrastive \
+  --num_train_epochs=4 \
+  --num_eval_per_epoch=2 \
+  --model_dir=${DATA_DIR}/ams \
   --distribution_strategy=mirrored \
-  --train_data_size=10000 \
-  --eval_data_size=100 \
   --init_checkpoint=${BERT_DIR}/bert_model-1 \
   --num_gpus=1 \
-  #--dtype=fp16 \
-  #--loss_scale=dynamic \
+  --train_data_size=138574 \
+  --eval_data_size=4402 \
+  # --dtype=fp16 \
+  # --loss_scale=dynamic \
 
 

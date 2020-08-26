@@ -80,6 +80,7 @@ def get_ams_metric_fn(forward=True):
       expand_b = tf.tile(expand_b,[batch_size,1,1])
       # B * B
       cos_dist = 1 - tf.reduce_sum(expand_a*expand_b,axis=-1)
+      # cos_dist = 1 + tf.keras.losses.cosine_similarity(expand_a,expand_b,axis=-1)
       truth = tf.range(batch_size,dtype=tf.int64)
       closest = tf.argmin(cos_dist, axis=-1)
       return tf.reduce_sum(tf.cast(tf.equal(truth,closest),tf.int32)) / batch_size * 100

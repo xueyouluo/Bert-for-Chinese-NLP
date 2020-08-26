@@ -4,6 +4,7 @@ import tensorflow as tf
 
 
 def get_additive_margin_softmax_loss(margin=0.3, scale=10.0):
+  # refer to the paper "Language-agnostic BERT Sentence Embedding"
   def ams(a,b):
     batch_size = tf.shape(a)[0]
     # B * 1 * D

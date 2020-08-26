@@ -81,9 +81,9 @@ Bert for Chinese NLP tasks, developed with TensorFlow 2.x.
 
 > evaluation的时候使用了同样的方法来计算metric，即在同一个batch中，anchor对应的postive之间的距离应该是最小的。
 
-在lcqmc的简单测试结果：
+在lcqmc的简单测试结果，batch size=128：
 
-> `loss: 0.1070 - accuracy: 99.0986 - val_loss: 0.0464 - val_accuracy: 99.2188`
+> `loss: 0.0874 - accuracy: 99.1379 - val_loss: 0.1809 - val_accuracy: 97.7902`
 
 ##### Contrastive Loss
 
@@ -105,16 +105,19 @@ Bert for Chinese NLP tasks, developed with TensorFlow 2.x.
 
 测试时发现evaluation的loss和accuracy基本没什么变化，而且accuracy效果较差，因此将evaluation的batch size调整到跟训练的大小一样，发现效果好了很多。也正如论文中提到的，这种任务需要batch size越大越好，有机会会研究一下论文中提到的Cross-Accelerator Negative Sampling机制，可以将negative变得很大。
 
-> 但是evalutation的loss还是没有什么变化，把测试数据换成训练数据发现还是能降的，说明模型应该是过拟合到训练数据了，所以还是需要将batch size弄大一些。
+> 但是evalutation的loss还是没有什么变化，把测试数据换成训练数据发现还是能降的，说明模型应该是过拟合到训练数据了，所以还是需要将batch size弄大一些。但是把batch size调整成128后，loss降的还是很慢，而且accuracy居然越训练越低-_-!!这又是个bug？
 
 > 对论文中提到的将normalize之后的embedding再进行scale这一步不是特别清楚，因为即使你scale后算cosine距离其实还是一样的，我们分析是他想扩大gradients，但是这个直接对loss或者learning rate进行scale不行吗？
 
-简单跑了一下lcqmc的任务，结果大概如下：
+简单跑了一下lcqmc的任务，结果大概如下，与triplet lose采用了相同的配置，margin设置为0.3：
 
-> `loss: 5.9412 - forward_accuracy: 88.5817 - backward_accuracy: 88.7921 - val_loss: 5.7582 - val_forward_accuracy: 94.5312 - val_backward_accuracy: 92.1875`
+> `loss: 8.9467 - forward_accuracy: 77.0578 - backward_accuracy: 77.0751 - val_loss: 8.4648 - val_forward_accuracy: 94.3500 - val_backward_accuracy: 94.2830`
+> 在第一个epoch结束的时候已经达到最高的accuracy了，后面的话training的accuracy甚至还是下降的，evaluation的accuracy也不怎么提升了。个人觉得可能还需要训练的更久一些，因为每一个epoch的数据都会被shuffle的，总体上看loss还是在降的。
 
 google也放出了他们在100多个语言上训练的LaBSE模型，有时间的话把它拿过来在中文上测试一下。
 
 ##### 实际检验
 
 从上面的简单的结果来看，triplet loss的效果最好，AMS的效果其次，但是我们需要在进一步实践中检验一下他们的效果，看看哪种方法能够从数据集中找到最相似的句子。
+
+具体参考[SBert_results](./sbert_results.md)。

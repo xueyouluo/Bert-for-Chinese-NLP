@@ -99,7 +99,7 @@ Bert for Chinese NLP tasks, developed with TensorFlow 2.x.
 
 ##### Additive Margin Softmax
 
-最近读到了Google的论文《Language-agnostic BERT Sentence Embedding》，其中提到的additive margin softmax挺有趣的，因此也实现了一下，将simese_type设置为ams即可。
+最近读到了Google的论文《Language-agnostic BERT Sentence Embedding》，其中提到的additive margin softmax挺有趣的，因此也实现了一下（其实就是AM-Softmax了，只是稍微有点不同而已），将simese_type设置为ams即可。
 
 一开始使用LSTM的模型进行了测试，发现效果不行，因此直接改成用bert进行测试，效果开始好了很多。
 
@@ -107,12 +107,10 @@ Bert for Chinese NLP tasks, developed with TensorFlow 2.x.
 
 > 但是evalutation的loss还是没有什么变化，把测试数据换成训练数据发现还是能降的，说明模型应该是过拟合到训练数据了，所以还是需要将batch size弄大一些。但是把batch size调整成128后，loss降的还是很慢，而且accuracy居然越训练越低-_-!!这又是个bug？
 
-> 对论文中提到的将normalize之后的embedding再进行scale这一步不是特别清楚，因为即使你scale后算cosine距离其实还是一样的，我们分析是他想扩大gradients，但是这个直接对loss或者learning rate进行scale不行吗？
-
 简单跑了一下lcqmc的任务，结果大概如下，与triplet lose采用了相同的配置，margin设置为0.3：
 
-> `loss: 8.9467 - forward_accuracy: 77.0578 - backward_accuracy: 77.0751 - val_loss: 8.4648 - val_forward_accuracy: 94.3500 - val_backward_accuracy: 94.2830`
-> 在第一个epoch结束的时候已经达到最高的accuracy了，后面的话training的accuracy甚至还是下降的，evaluation的accuracy也不怎么提升了。个人觉得可能还需要训练的更久一些，因为每一个epoch的数据都会被shuffle的，总体上看loss还是在降的。
+> `loss: 0.4346 - forward_accuracy: 99.5494 - backward_accuracy: 99.5841 - val_loss: 1.2178 - val_forward_accuracy: 97.8571 - val_backward_accuracy: 97.7679`
+
 
 google也放出了他们在100多个语言上训练的LaBSE模型，有时间的话把它拿过来在中文上测试一下。
 

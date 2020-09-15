@@ -97,6 +97,7 @@ class SiameseAMSModel(tf.keras.Model):
     a = self.encoder(a,training=training)
     b = self.encoder(b,training=training)
     concat_val = tf.concat([a,b],axis=-1)
+    # TODO: 这个类只是用来封装训练的过程，因此我们是可以直接把loss和metric的计算放在这里进行的
     return concat_val
 
 class SiameseClassifierModel(tf.keras.Model):

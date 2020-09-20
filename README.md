@@ -24,6 +24,8 @@ Bert for Chinese NLP tasks, developed with TensorFlow 2.x.
     - 一种是直接pip安装:`pip install tf-models-official`
       > 不过不太推荐，本人测试过，有两个问题：它会安装tensorflow==2.3.0，但是我们一般是需要用tensorflow-gpu==2.3.0的版本，另外即使卸载了tf-2.3重新安装tf-gpu-2.3，仍然会出现reshape的报错。我没有深入的去debug了。
 
+> TODO:  把依赖只变成tf-models-official，减少安装成本。
+
 ### Bert预训练模型转换
 
 由于这里的bert是使用tf2.x实现的，因此原来开源的bert模型的checkpoint都不能直接使用，需要转换为tf2.x版本的才可以使用。
@@ -119,3 +121,9 @@ google也放出了他们在100多个语言上训练的LaBSE模型，有时间的
 从上面的简单的结果来看，triplet loss的效果最好，AMS的效果其次，但是我们需要在进一步实践中检验一下他们的效果，看看哪种方法能够从数据集中找到最相似的句子。
 
 具体参考[SBert_results](./sbert_results.md)。
+
+
+
+#### NER任务
+
+使用models中的BertTokenClassifier跑通了基本的ner流程，在clue_ner的dev集上f1为81左右。

@@ -60,6 +60,7 @@ class BaseDataset(object):
     # 如果是测试数据，那么label可以设置一个默认值，预测的时候不会使用
     # 如果是回归任务，label_file可以为空，这里默认数据是float32类型的
     self.label_map = self.get_label_map(label_file)
+    self.id2label_map = {v:k for k,v in self.label_map.items()}
     self._data_size = None
 
   def get_label_map(self, label_file):
@@ -135,6 +136,41 @@ class BaseDataset(object):
         self._data_size += 1
       logging.info(f'Datasize - {self._data_size}')
     return self._data_size
+
+class NERDataset(BaseDataset):
+  '''一般ner的数据格式为
+      A\tO
+      B\tB-tag
+    中文一般都是按字来进行NER，因此我们这里也默认用字符来处理。在有英文的时候可能会有一些问题，丢失了英文的词信息。
+  '''
+  def process_single_example(self, item):
+    text_a = item['text'].lower()
+    label = [self.label_map[lb] for lb in item['labels']]
+    tokens = list(text_a)
+    assert len(label) == len(tokens)
+    # Account for CLS and SEP
+    tokens = tokens[0:self.max_seq_len-2]
+    label = label[0:self.max_seq_len-2]
+    tokens = [BERT_CLS_TOKEN] + [t if t in self.tokenizer.vocab else BERT_UNKOWN_TOKEN for t in tokens] + [BERT_SEP_TOKEN]
+    label = [0] + label + [0]
+    tokens = self.tokenizer.convert_tokens_to_ids(tokens)
+    segments = [0] * len(tokens)
+    return {'text_a':(tokens,segments),'label':label}
+
+  @property
+  def output_shape(self):
+    return {
+      "text_a":(tf.TensorShape([None]),tf.TensorShape([None])),
+      "label": tf.TensorShape([None])
+    }
+
+  @property
+  def output_type(self):
+    return {
+      'text_a':(tf.int32,tf.int32),
+      'label': tf.int32 
+    }
+
 
 class SentencesDataset(BaseDataset):
   def process_single_example(self, item):

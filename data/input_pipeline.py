@@ -37,11 +37,10 @@ def convert_bert_input_to_list(example):
   input_mask = tf.ones_like(input_ids)
   return [input_ids,input_mask,segment_ids]
 
-
-def create_siamese_dataset(dataset,
-                          batch_size,
-                          is_training=True,
-                          input_pipeline_context=None):
+def create_dataset(dataset,
+                  batch_size,
+                  is_training=True,
+                  input_pipeline_context=None):
   dataset = tf.data.Dataset.from_generator(
     dataset.make_generator,
     args=[True],

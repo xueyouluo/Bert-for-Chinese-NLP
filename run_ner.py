@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""BERT classification or regression finetuning runner in TF 2.x."""
+"""BERT NER finetuning runner in TF 2.x."""
 from __future__ import absolute_import, division, print_function
 
 import functools
@@ -24,21 +24,18 @@ import tensorflow as tf
 from absl import app, flags, logging
 
 import gin
-from data import input_pipeline
-from data.dataset import (ContrastiveDataset, SentencesDataset, SiameseDataset,
-                          TripletDataset)
-from model import siamese_bert
 from official.modeling import performance
 from official.nlp import optimization
 from official.nlp.bert import bert_models, common_flags
 from official.nlp.bert import configs as bert_configs
 from official.nlp.bert import model_saving_utils, tokenization
 from official.utils.misc import distribution_utils, keras_utils
-from utils.losses import (get_classification_loss_fn, get_contrastive_loss_fn,
-                          get_triplet_loss_fn, get_additive_margin_softmax_loss)
-from utils.metrics import (get_contrastive_distance_fn, get_ams_metric_fn,
-                           get_contrastive_metric_fn, get_triplet_metric_fn)
-from utils.model_utils import get_dataset_fn,run_keras_compile_fit
+
+from data.dataset import NERDataset
+from utils.model_utils import get_dataset_fn, run_keras_compile_fit
+from model.ner_bert import ner_model
+from utils.losses import get_ner_loss_fn
+from utils.callback import NERF1Metrics
 
 flags.DEFINE_enum(
     'mode', 'train_and_eval', ['train_and_eval', 'export_only', 'predict'],
@@ -63,8 +60,6 @@ flags.DEFINE_integer('train_batch_size', 32, 'Batch size for training.')
 flags.DEFINE_integer('eval_batch_size', 32, 'Batch size for evaluation.')
 
 # 额外的flags
-flags.DEFINE_enum('model_type', 'bert', ['bert','siamese'],'model type')
-flags.DEFINE_enum('siamese_type', 'classify', ['classify','triplet','contrastive','ams'],'siamese type')
 flags.DEFINE_integer('max_seq_length', 512, 'Max sequence length, default 512, you can use smaller number to save memory')
 flags.DEFINE_string('vocab_file', None,
                     'The vocabulary file that the BERT model was trained on.')
@@ -72,52 +67,39 @@ flags.DEFINE_string('label_file', None,
                     'The label file that to map the labels.')
 flags.DEFINE_integer('train_data_size', None, 'size of training dataset.')
 flags.DEFINE_integer('eval_data_size', None, 'size of evaluation dataset.')
-
-# Triplet loss flags
-flags.DEFINE_float('margin', 1.0, 'margin for triplet loss')
-
-
 common_flags.define_common_bert_flags()
 
 FLAGS = flags.FLAGS
 
 
-def run_bert_classifier(strategy,
-                        bert_config,
-                        input_meta_data,
-                        model_dir,
-                        epochs,
-                        steps_per_epoch,
-                        steps_per_loop,
-                        eval_steps,
-                        warmup_steps,
-                        initial_lr,
-                        init_checkpoint,
-                        train_input_fn,
-                        eval_input_fn,
-                        training_callbacks=True,
-                        custom_callbacks=None,
-                        custom_metrics=None):
-  """Run BERT siamese training using low-level API."""
+def run_bert_ner(strategy,
+                bert_config,
+                input_meta_data,
+                model_dir,
+                epochs,
+                steps_per_epoch,
+                steps_per_loop,
+                eval_steps,
+                warmup_steps,
+                initial_lr,
+                init_checkpoint,
+                train_input_fn,
+                eval_input_fn,
+                training_callbacks=True,
+                custom_callbacks=None,
+                custom_metrics=None):
+  """Run BERT NER training using low-level API."""
   max_seq_length = input_meta_data['max_seq_length']
-  num_classes = input_meta_data.get('num_labels', 1)
+  num_classes = input_meta_data['num_labels']
+  id2label = input_meta_data['id2label']
   logging.info(f'class num {num_classes}')
-  is_regression = num_classes <= 1
 
   def _get_model():
-    """Gets a siamese model."""
-    if FLAGS.model_type == 'siamese':
-      model, core_model = (
-        siamese_bert.siamese_model(
-            bert_config,
-            num_classes,
-            siamese_type=FLAGS.siamese_type))
-    else:
-      model, core_model = (
-        bert_models.classifier_model(
-            bert_config,
-            num_classes,
-            max_seq_length))
+    """Gets a ner model."""
+    model, core_model = (
+      ner_model(
+          bert_config,
+          num_classes))
     optimizer = optimization.create_optimizer(initial_lr,
                                               steps_per_epoch * epochs,
                                               warmup_steps, FLAGS.end_lr,
@@ -132,59 +114,27 @@ def run_bert_classifier(strategy,
   # from the dataset) to compute weighted loss, as used for the regression
   # tasks. The classification tasks, using the custom get_loss_fn don't accept
   # sample weights though.
-  loss_fn = None
-  if is_regression:
-    loss_fn = tf.keras.losses.MeanSquaredError() 
-  else:
-    if FLAGS.model_type == 'siamese':
-      if FLAGS.siamese_type == 'triplet':
-        loss_fn = get_triplet_loss_fn(FLAGS.margin)
-      elif FLAGS.siamese_type == 'contrastive':
-        loss_fn = get_contrastive_loss_fn(FLAGS.margin)
-      elif FLAGS.siamese_type == 'ams':
-        loss_fn = get_additive_margin_softmax_loss(FLAGS.margin)
-    if loss_fn is None:
-      loss_fn = get_classification_loss_fn(num_classes)
+  loss_fn = get_ner_loss_fn(num_classes)
 
   # Defines evaluation metrics function, which will create metrics in the
   # correct device and strategy scope.
   monitor = None
   if custom_metrics:
     metric_fn = custom_metrics
-  elif is_regression:
-    metric_fn = functools.partial(
-        tf.keras.metrics.MeanSquaredError,
-        'mean_squared_error',
-        dtype=tf.float32)
-    monitor = 'val_mean_squared_error'
   else:
-    # TODO：暂时没想好triplet算什么metric比较好
-    if FLAGS.model_type == 'siamese':
-      if FLAGS.siamese_type == 'triplet':
-        metric_fn = get_triplet_metric_fn
-      elif FLAGS.siamese_type == 'classify':
-        metric_fn = functools.partial(
-        tf.keras.metrics.SparseCategoricalAccuracy,
-        'accuracy',
-        dtype=tf.float32)
-      elif FLAGS.siamese_type == 'contrastive':
-        metric_fn = [
-          functools.partial(get_contrastive_metric_fn,FLAGS.margin/2),
-          functools.partial(get_contrastive_distance_fn,1),
-          functools.partial(get_contrastive_distance_fn,0)]
-      elif FLAGS.siamese_type == 'ams':
-        metric_fn = [
-          functools.partial(get_ams_metric_fn,True),
-          functools.partial(get_ams_metric_fn,False)]
-        monitor = 'val_forward_accuracy'
-    else:
-      metric_fn = functools.partial(
-        tf.keras.metrics.SparseCategoricalAccuracy,
-        'accuracy',
-        dtype=tf.float32)
-    
-    if not monitor:
-      monitor = 'val_accuracy'
+    metric_fn = functools.partial(
+      tf.keras.metrics.SparseCategoricalAccuracy,
+      'accuracy',
+      dtype=tf.float32)
+
+  f1_callback = NERF1Metrics(id2label,eval_input_fn(),model_dir=model_dir)
+  if custom_callbacks:
+    custom_callbacks.append(f1_callback)
+  else:
+    custom_callbacks = [f1_callback]
+  
+  if not monitor:
+    monitor = 'val_accuracy'
 
   # Start training using Keras compile/fit API.
   logging.info('Training using TF 2.x Keras compile/fit API with '
@@ -206,15 +156,13 @@ def run_bert_classifier(strategy,
       training_callbacks=training_callbacks,
       custom_callbacks=custom_callbacks)
 
+
 def run_bert(strategy,
              input_meta_data,
              model_config,
              train_input_fn=None,
              eval_input_fn=None,
-             init_checkpoint=None,
-             custom_callbacks=None,
-             custom_metrics=None):
-  """Run BERT training."""
+             init_checkpoint=None):
   # Enables XLA in Session Config. Should not be set for TPU.
   keras_utils.set_session_config(FLAGS.enable_xla)
   performance.set_mixed_precision_policy(common_flags.dtype())
@@ -229,18 +177,15 @@ def run_bert(strategy,
 
   if not strategy:
     raise ValueError('Distribution strategy has not been specified.')
-
-  if not custom_callbacks:
-    custom_callbacks = []
-
+  
+  custom_callbacks = []
   if FLAGS.log_steps:
     custom_callbacks.append(
         keras_utils.TimeHistory(
             batch_size=FLAGS.train_batch_size,
             log_steps=FLAGS.log_steps,
             logdir=FLAGS.model_dir))
-
-  trained_model, _ = run_bert_classifier(
+  trained_model, _ = run_bert_ner(
       strategy,
       model_config,
       input_meta_data,
@@ -254,24 +199,15 @@ def run_bert(strategy,
       init_checkpoint or FLAGS.init_checkpoint,
       train_input_fn,
       eval_input_fn,
-      custom_callbacks=custom_callbacks,
-      custom_metrics=custom_metrics)
+      custom_callbacks=custom_callbacks)
 
   if FLAGS.model_export_path:
     model_saving_utils.export_bert_model(
         FLAGS.model_export_path, model=trained_model)
   return trained_model
 
-
-def custom_main(custom_callbacks=None, custom_metrics=None):
-  """Run classification or regression.
-
-  Args:
-    custom_callbacks: list of tf.keras.Callbacks passed to training loop.
-    custom_metrics: list of metrics passed to the training loop.
-  """
+def main(_):
   gin.parse_config_files_and_bindings(FLAGS.gin_file, FLAGS.gin_param)
-
   if not FLAGS.model_dir:
     FLAGS.model_dir = '/tmp/bert20/'
 
@@ -285,17 +221,7 @@ def custom_main(custom_callbacks=None, custom_metrics=None):
       distribution_strategy=FLAGS.distribution_strategy,
       num_gpus=FLAGS.num_gpus)
 
-  if FLAGS.model_type == 'siamese':
-    if FLAGS.siamese_type == 'classify':
-      data_fn = SiameseDataset
-    elif FLAGS.siamese_type in ['triplet','ams']:
-      data_fn = TripletDataset
-    elif FLAGS.siamese_type == 'contrastive':
-      data_fn = ContrastiveDataset
-  else:
-    data_fn = SentencesDataset
-  
-  eval_dataset = data_fn(
+  eval_dataset = NERDataset(
     tokeninzer, 
     FLAGS.eval_data_path, 
     FLAGS.mode, 
@@ -308,7 +234,7 @@ def custom_main(custom_callbacks=None, custom_metrics=None):
   
   if FLAGS.mode != 'train_and_eval':
     raise ValueError('Unsupported mode is specified: %s' % FLAGS.mode)
-  train_dataset = data_fn(
+  train_dataset = NERDataset(
     tokeninzer, 
     FLAGS.train_data_path,
     FLAGS.mode, 
@@ -323,21 +249,17 @@ def custom_main(custom_callbacks=None, custom_metrics=None):
     "max_seq_length": FLAGS.max_seq_length,
     'num_labels':train_dataset.label_num,
     "train_data_size": FLAGS.train_data_size if FLAGS.train_data_size else train_dataset.data_size,
-    "eval_data_size": FLAGS.eval_data_size if FLAGS.eval_data_size else eval_dataset.data_size
-
+    "eval_data_size": FLAGS.eval_data_size if FLAGS.eval_data_size else eval_dataset.data_size,
+    "id2label": train_dataset.id2label_map
   }
+
   run_bert(
       strategy,
       input_meta_data,
       bert_config,
       train_input_fn,
-      eval_input_fn,
-      custom_callbacks=custom_callbacks,
-      custom_metrics=custom_metrics)
+      eval_input_fn,)
 
-
-def main(_):
-  custom_main(custom_callbacks=None, custom_metrics=None)
 
 
 if __name__ == '__main__':

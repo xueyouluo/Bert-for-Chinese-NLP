@@ -1,0 +1,6 @@
+tensorflow-gpu==2.3
+seqeval
+tensorflow-addons
+gin-config
+sentencepiece
+tensorflow-hub

@@ -7,6 +7,7 @@ export DATA_DIR=/nfs/users/xueyou/data/chinese_nlp/clue_ner/processed
 
 python run_ner.py \
   --mode='train_and_eval' \
+  --use_crf=True \
   --train_data_path=${DATA_DIR}/train.json \
   --eval_data_path=${DATA_DIR}/dev.json \
   --train_batch_size=32 \

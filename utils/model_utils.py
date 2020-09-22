@@ -7,7 +7,8 @@ from official.utils.misc import distribution_utils, keras_utils
 
 def get_dataset_fn(raw_dataset,
                    global_batch_size,
-                   is_training):
+                   is_training,
+                   pad_value=0):
   """Gets a closure to create a dataset."""
 
   def _dataset_fn(ctx=None):
@@ -18,7 +19,8 @@ def get_dataset_fn(raw_dataset,
         raw_dataset,
         batch_size,
         is_training=is_training,
-        input_pipeline_context=ctx)
+        input_pipeline_context=ctx,
+        padding_values=pad_value)
     return dataset
 
   return _dataset_fn

@@ -6,7 +6,7 @@ from seqeval.metrics import f1_score, classification_report
 
 
 class NERF1Metrics(tf.keras.callbacks.Callback):
-  def __init__(self, id2label, dataset, pad_value=0, digits=4, model_dir=None):
+  def __init__(self, id2label, dataset, pad_value=0, digits=4, model_dir=None, use_crf=False):
     super().__init__()
     self.id2label = id2label
     self.pad_value = pad_value
@@ -14,6 +14,7 @@ class NERF1Metrics(tf.keras.callbacks.Callback):
     self.dataset = dataset
     self.best_f1 = -1.0
     self.best_save_file = None if not model_dir else os.path.join(model_dir,'best_f1')
+    self.use_crf = use_crf
 
   def convert_idx_to_name(self, y, array_indexes):
     """Convert label index to name.
@@ -45,7 +46,11 @@ class NERF1Metrics(tf.keras.callbacks.Callback):
     true = []
     pred = []
     for x,y in self.dataset.as_numpy_iterator():
-      y_pred = self.model.predict_on_batch(x)
+      ret = self.model.predict_on_batch(x)
+      if self.use_crf:
+        y_pred, _ = ret
+      else:
+        y_pred = ret
       y_true = y
       y_pred = np.argmax(y_pred, -1)
       non_pad_indexes = [np.nonzero(y_true_row != self.pad_value)[0] for y_true_row in y_true]

@@ -40,7 +40,8 @@ def convert_bert_input_to_list(example):
 def create_dataset(dataset,
                   batch_size,
                   is_training=True,
-                  input_pipeline_context=None):
+                  input_pipeline_context=None,
+                  padding_values=0):
   dataset = tf.data.Dataset.from_generator(
     dataset.make_generator,
     args=[True],
@@ -55,7 +56,7 @@ def create_dataset(dataset,
                             input_pipeline_context.input_pipeline_id)
   
   if is_training:
-    dataset = dataset.shuffle(100)
+    dataset = dataset.shuffle(1000)
     dataset = dataset.repeat()
 
   def _process_record(record):
@@ -71,7 +72,7 @@ def create_dataset(dataset,
     _process_record,
     num_parallel_calls=tf.data.experimental.AUTOTUNE)
   
-  dataset = dataset.padded_batch(batch_size, drop_remainder=is_training)
+  dataset = dataset.padded_batch(batch_size, drop_remainder=is_training,padding_values=padding_values)
   dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
   return dataset
 

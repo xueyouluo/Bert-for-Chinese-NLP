@@ -126,4 +126,8 @@ google也放出了他们在100多个语言上训练的LaBSE模型，有时间的
 
 #### NER任务
 
-使用models中的BertTokenClassifier跑通了基本的ner流程，在clue_ner的dev集上f1为81左右。
+使用models中的BertTokenClassifier跑通了基本的ner流程，在clue_ner的dev集上f1为76左右。
+
+测试了dice loss，f1指标基本没有什么变化，不过没有调参。参考论文《Dice Loss for Data-imbalanced NLP Tasks》。
+
+加入了CRF层，但是效果也没有太大的提升，速度还降低了很多。

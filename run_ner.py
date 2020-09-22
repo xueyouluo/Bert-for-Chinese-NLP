@@ -31,11 +31,12 @@ from official.nlp.bert import configs as bert_configs
 from official.nlp.bert import model_saving_utils, tokenization
 from official.utils.misc import distribution_utils, keras_utils
 
-from data.dataset import NERDataset
+from data.dataset import NERDataset,_PADDING_LABEL_ID
 from utils.model_utils import get_dataset_fn, run_keras_compile_fit
 from model.ner_bert import ner_model
-from utils.losses import get_ner_loss_fn
+from utils.losses import get_ner_loss_fn,get_ner_dice_loss_fn
 from utils.callback import NERF1Metrics
+from utils.metrics import get_ner_acc_fn
 
 flags.DEFINE_enum(
     'mode', 'train_and_eval', ['train_and_eval', 'export_only', 'predict'],
@@ -67,6 +68,11 @@ flags.DEFINE_string('label_file', None,
                     'The label file that to map the labels.')
 flags.DEFINE_integer('train_data_size', None, 'size of training dataset.')
 flags.DEFINE_integer('eval_data_size', None, 'size of evaluation dataset.')
+
+flags.DEFINE_boolean(
+      'use_crf', False,
+      'Whether to use crf ')
+
 common_flags.define_common_bert_flags()
 
 FLAGS = flags.FLAGS
@@ -99,7 +105,8 @@ def run_bert_ner(strategy,
     model, core_model = (
       ner_model(
           bert_config,
-          num_classes))
+          num_classes,
+          FLAGS.use_crf))
     optimizer = optimization.create_optimizer(initial_lr,
                                               steps_per_epoch * epochs,
                                               warmup_steps, FLAGS.end_lr,
@@ -114,7 +121,11 @@ def run_bert_ner(strategy,
   # from the dataset) to compute weighted loss, as used for the regression
   # tasks. The classification tasks, using the custom get_loss_fn don't accept
   # sample weights though.
-  loss_fn = get_ner_loss_fn(num_classes)
+  if FLAGS.use_crf:
+    loss_fn = None
+  else:
+    loss_fn = get_ner_loss_fn()
+  # loss_fn = get_ner_dice_loss_fn(num_classes)
 
   # Defines evaluation metrics function, which will create metrics in the
   # correct device and strategy scope.
@@ -122,19 +133,29 @@ def run_bert_ner(strategy,
   if custom_metrics:
     metric_fn = custom_metrics
   else:
-    metric_fn = functools.partial(
-      tf.keras.metrics.SparseCategoricalAccuracy,
-      'accuracy',
-      dtype=tf.float32)
+    # if not FLAGS.use_crf:
+    #   metric_fn = functools.partial(
+    #     tf.keras.metrics.SparseCategoricalAccuracy,
+    #     'accuracy',
+    #     dtype=tf.float32)
+    # else:
+    metric_fn = get_ner_acc_fn
 
-  f1_callback = NERF1Metrics(id2label,eval_input_fn(),model_dir=model_dir)
+  # 我们在计算f1的时候要去掉无意义的值（也就是Padding)
+  # 同时把f1最好的模型保存下来
+  f1_callback = NERF1Metrics(
+    id2label,
+    eval_input_fn(),
+    pad_value=_PADDING_LABEL_ID,
+    model_dir=model_dir,
+    use_crf=FLAGS.use_crf)
   if custom_callbacks:
     custom_callbacks.append(f1_callback)
   else:
     custom_callbacks = [f1_callback]
   
   if not monitor:
-    monitor = 'val_accuracy'
+    monitor = 'val_loss'
 
   # Start training using Keras compile/fit API.
   logging.info('Training using TF 2.x Keras compile/fit API with '
@@ -230,7 +251,8 @@ def main(_):
   eval_input_fn = get_dataset_fn(
       eval_dataset,
       FLAGS.eval_batch_size,
-      is_training=False)
+      is_training=False,
+      pad_value=_PADDING_LABEL_ID)
   
   if FLAGS.mode != 'train_and_eval':
     raise ValueError('Unsupported mode is specified: %s' % FLAGS.mode)
@@ -243,7 +265,8 @@ def main(_):
   train_input_fn = get_dataset_fn(
       train_dataset,
       FLAGS.train_batch_size,
-      is_training=True)
+      is_training=True,
+      pad_value=_PADDING_LABEL_ID)
 
   input_meta_data = {
     "max_seq_length": FLAGS.max_seq_length,

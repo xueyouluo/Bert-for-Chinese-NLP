@@ -1,6 +1,7 @@
 '''自定义的metrics'''
 import tensorflow as tf
 
+from utils.losses import _masked_labels_and_weights
 
 
 def get_contrastive_distance_fn(feature_val=1):
@@ -93,4 +94,13 @@ def get_ams_metric_fn(forward=True):
   ams_metric_fn.__name__ = ('forward_' if forward else 'backward_') + 'accuracy'
   return ams_metric_fn
 
+def get_ner_acc_fn():
+  def ner_acc_fn(y_true, y_pred):
+    decode_tags = tf.argmax(y_pred,axis=-1)
+    masked_labels, masked_weights = _masked_labels_and_weights(y_true)
+    equal = tf.reduce_sum(tf.cast(tf.cast(masked_labels,tf.int64) == decode_tags, tf.float32) * masked_weights)
+    acc = equal / tf.reduce_sum(masked_weights)
+    return acc
 
+  ner_acc_fn.__name__ = 'accuracy'
+  return ner_acc_fn

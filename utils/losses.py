@@ -89,8 +89,8 @@ def get_triplet_loss_fn(margin=1.0):
     return tf.reduce_mean(loss)
   return triplet_loss_fn
 
-def get_ner_loss_fn(num_classes):
-  def ner_loss_fn(y_true, y_pred):
+
+def ner_loss_fn(y_true, y_pred):
     model_outputs = tf.cast(y_pred, tf.float32)
     masked_labels, masked_weights = _masked_labels_and_weights(y_true)
     loss = tf.keras.losses.sparse_categorical_crossentropy(
@@ -99,5 +99,28 @@ def get_ner_loss_fn(num_classes):
     denominator_loss = tf.reduce_sum(masked_weights)
     loss = tf.math.divide_no_nan(numerator_loss, denominator_loss)
     return loss
-  
+
+def get_ner_loss_fn():
   return ner_loss_fn
+
+def get_ner_dice_loss_fn(alpha=0.5,gamma=1.0):
+  def ner_dice_loss_fn(y_true, y_pred):
+    model_outputs = tf.cast(y_pred, tf.float32)
+    masked_labels, masked_weights = _masked_labels_and_weights(y_true)
+
+    # 获取true label的prob值
+    probs = tf.nn.softmax(model_outputs)
+    batch_size = tf.shape(model_outputs)[0]
+    seq_len = tf.shape(model_outputs)[1]
+    i1,i2 = tf.meshgrid(tf.range(batch_size),tf.range(seq_len),indexing="ij")
+    indices = tf.stack((i1,i2,masked_labels),axis=2)
+    probs = tf.gather_nd(probs,indices)
+
+    # 计算dice loss
+    probs_with_factor = ((1 - probs) ** alpha) * probs
+    loss = 1 - (2 * probs_with_factor + gamma) / (probs_with_factor + 1 + gamma)
+    numerator_loss = tf.reduce_sum(loss * masked_weights)
+    denominator_loss = tf.reduce_sum(masked_weights)
+    loss = tf.math.divide_no_nan(numerator_loss, denominator_loss)
+    return loss
+  return ner_dice_loss_fn

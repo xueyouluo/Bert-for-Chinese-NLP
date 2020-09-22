@@ -33,6 +33,10 @@ BERT_CLS_TOKEN = "[CLS]"
 BERT_SEP_TOKEN = "[SEP]"
 BERT_MASK_TOKEN = "[MASK]"
 
+# A negative label id for the padding label, which will not contribute
+# to loss/metrics in training.
+_PADDING_LABEL_ID = -1
+
 def _truncate_seq_pair(tokens_a, tokens_b, max_length):
   """Truncates a sequence pair in place to the maximum length."""
 
@@ -152,7 +156,7 @@ class NERDataset(BaseDataset):
     tokens = tokens[0:self.max_seq_len-2]
     label = label[0:self.max_seq_len-2]
     tokens = [BERT_CLS_TOKEN] + [t if t in self.tokenizer.vocab else BERT_UNKOWN_TOKEN for t in tokens] + [BERT_SEP_TOKEN]
-    label = [0] + label + [0]
+    label = [_PADDING_LABEL_ID] + label + [_PADDING_LABEL_ID]
     tokens = self.tokenizer.convert_tokens_to_ids(tokens)
     segments = [0] * len(tokens)
     return {'text_a':(tokens,segments),'label':label}
